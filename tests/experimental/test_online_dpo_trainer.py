@@ -44,7 +44,7 @@ if is_vision_available():
 class TestOnlineDPOTrainer(TrlTestCase):
     def setup_method(self):
         self.model_id = "trl-internal-testing/tiny-Qwen2ForCausalLM-2.5"
-        self.model = AutoModelForCausalLM.from_pretrained(self.model_id)
+        self.model = AutoModelForCausalLM.from_pretrained(self.model_id, dtype="float32")
         self.ref_model = AutoModelForCausalLM.from_pretrained(self.model_id)
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
         self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -241,7 +241,7 @@ class TestOnlineDPOTrainer(TrlTestCase):
     @require_torch_accelerator
     @require_vllm
     @pytest.mark.slow
-    def test_training_with_vllm(self, config_name):
+    def test_training_with_vllm_server(self, config_name):
         def cleanup_vllm_communicator(trainer):
             """Clean up vLLM communicator to avoid conflicts between test runs"""
             try:
@@ -251,13 +251,14 @@ class TestOnlineDPOTrainer(TrlTestCase):
                 pass  # Continue if cleanup fails
 
         model_id = "trl-internal-testing/small-Qwen2ForCausalLM-2.5"  # We need a bigger model
-        model = AutoModelForCausalLM.from_pretrained(model_id)
+        model = AutoModelForCausalLM.from_pretrained(model_id, dtype="float32")
         tokenizer = AutoTokenizer.from_pretrained(model_id)
         tokenizer.pad_token = tokenizer.eos_token
 
         training_args = OnlineDPOConfig(
             output_dir=self.tmp_dir,
             use_vllm=True,
+            vllm_mode="server",
             vllm_gpu_memory_utilization=0.2,
             report_to="none",
         )
@@ -284,7 +285,7 @@ class TestOnlineDPOTrainer(TrlTestCase):
     def test_training_with_vllm_colocate(self):
         """Test vLLM colocate mode with our refactored implementation"""
         model_id = "trl-internal-testing/small-Qwen2ForCausalLM-2.5"  # We need a bigger model
-        model = AutoModelForCausalLM.from_pretrained(model_id)
+        model = AutoModelForCausalLM.from_pretrained(model_id, dtype="float32")
         tokenizer = AutoTokenizer.from_pretrained(model_id)
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -351,7 +352,7 @@ class TestOnlineDPOTrainer(TrlTestCase):
 
         # Test default values
         config = OnlineDPOConfig()
-        assert config.vllm_mode == "server"
+        assert config.vllm_mode == "colocate"
         assert config.vllm_server_base_url is None
         assert config.vllm_server_host == "0.0.0.0"
         assert config.vllm_server_port == 8000
@@ -490,7 +491,7 @@ class TestOnlineDPOVisionTrainer(TrlTestCase):
         dataset = Dataset.from_dict(dataset_dict)
         dataset = dataset.cast_column("images", features.Sequence(features.Image()))
 
-        model = AutoModelForImageTextToText.from_pretrained(model_id)
+        model = AutoModelForImageTextToText.from_pretrained(model_id, dtype="float32")
         reward_model = AutoModelForSequenceClassification.from_pretrained(
             "trl-internal-testing/tiny-LlamaForCausalLM-3.2", num_labels=1
         )

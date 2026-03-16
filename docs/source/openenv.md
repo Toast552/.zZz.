@@ -1,6 +1,6 @@
 # OpenEnv Integration for Training LLMs with Environments
 
-[OpenEnv](https://github.com/meta-pytorch/OpenEnv) is an open-source framework from Meta's PyTorch team for defining, deploying, and interacting with environments in reinforcement learning (RL) and agentic workflows. It offers [Gymnasium-style APIs](https://gymnasium.farama.org) (e.g., `reset()` and `step()`) to interface with environments in a standard manner, and supports running these environments as backend servers (for example, via HTTP or containerised execution). You can find a collection of ready-to-use OpenEnv environments on the [Hugging Face Hub](https://huggingface.co/collections/openenv/environment-hub).
+[OpenEnv](https://github.com/meta-pytorch/OpenEnv) is an open-source framework from Meta's PyTorch team for defining, deploying, and interacting with environments in reinforcement learning (RL) and agentic workflows. It offers [Gymnasium-style APIs](https://gymnasium.farama.org) (e.g., `reset()` and `step()`) to interface with environments in a standard manner, and supports running these environments as backend servers (for example, via HTTP or containerised execution). You can find a collection of ready-to-use OpenEnv environments on the [Hugging Face Hub](https://huggingface.co/collections/openenv/openenv-environment-hub).
 
 In this guide, we’ll focus on **how to integrate OpenEnv with TRL**, but feel free to explore the links above to dive deeper into OpenEnv itself.
 
@@ -14,13 +14,16 @@ In this guide, we’ll focus on **how to integrate OpenEnv with TRL**, but feel 
 
 To use OpenEnv with TRL, install the environment package. You have two options:
 
-**Option A - Install from HF Space:**
+**Option A - Install from HF Space (recommended):**
 
 ```bash
 pip install git+https://huggingface.co/spaces/openenv/echo_env
 ```
 
-**Option B - Clone OpenEnv repo:**
+> [!TIP]
+> You can also install the core package from PyPI with `pip install "openenv-core[core]>=0.2.1"`, but note that environment-specific dependencies may need to be installed separately.
+
+**Option B - Clone OpenEnv repo (for development):**
 
 ```bash
 git clone https://github.com/meta-pytorch/OpenEnv.git

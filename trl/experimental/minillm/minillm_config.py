@@ -15,8 +15,6 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-import transformers
-from packaging.version import Version
 from transformers import TrainingArguments
 
 from ...trainer.grpo_config import GRPOConfig
@@ -31,7 +29,7 @@ class MiniLLMConfig(GRPOConfig):
     arguments, please refer to the [`~transformers.TrainingArguments`] and [`GRPOConfig`] documentation.
 
     Args:
-        teacher_model_init_kwargs (`dict[str, Any]]`, *optional*):
+        teacher_model_init_kwargs (`dict[str, Any]`, *optional*):
             Keyword arguments to pass to `AutoModelForCausalLM.from_pretrained` when instantiating the teacher model
             from a string.
         disable_dropout (`bool`, *optional*, defaults to `True`):
@@ -49,7 +47,9 @@ class MiniLLMConfig(GRPOConfig):
             Whether to apply length normalization to the rewards.
     """
 
-    teacher_model_init_kwargs: dict[str, Any] | None = field(
+    _VALID_DICT_FIELDS = GRPOConfig._VALID_DICT_FIELDS + ["teacher_model_init_kwargs"]
+
+    teacher_model_init_kwargs: dict[str, Any] | str | None = field(
         default=None,
         metadata={
             "help": "Keyword arguments to pass to `AutoModelForCausalLM.from_pretrained` when instantiating the "
@@ -88,14 +88,6 @@ class MiniLLMConfig(GRPOConfig):
         # We do not use the post_init of GRPOConfig because:
         # 1. num_generations can be < 2 in MiniLLMConfig. Scale_rewards must be set to "none" to avoid nan.
         self.bf16 = not (self.fp16) if self.bf16 is None else self.bf16
-
-        # Transformers explicitly set use_reentrant=True in the past to silence a PyTorch warning, but the default was
-        # never updated once PyTorch switched to recommending use_reentrant=False. Until that change lands upstream
-        # (see https://github.com/huggingface/transformers/pull/43203) and is released (most likely in 5.0.0), we
-        # default to the recommended non-reentrant behavior here, while preserving any user-provided value.
-        if self.gradient_checkpointing and Version(transformers.__version__) < Version("5.0.0"):
-            self.gradient_checkpointing_kwargs = self.gradient_checkpointing_kwargs or {}
-            self.gradient_checkpointing_kwargs.setdefault("use_reentrant", False)
 
         TrainingArguments.__post_init__(self)
 

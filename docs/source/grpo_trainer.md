@@ -161,7 +161,7 @@ $$
 \end{cases}
 $$
 
-They recommends using asymmetric temperatures,  \\( \tau_{\text{neg}} > \tau_{\text{pos}} \\) (defaults are  \\( \tau_{\text{pos}}=1.0, \tau_{\text{neg}}=1.05 \\) ). This ensures that the model is penalized more strictly for "bad" actions to prevent instability, while being more permissive with "good" actions.
+They recommend using asymmetric temperatures,  \\( \tau_{\text{neg}} > \tau_{\text{pos}} \\) (defaults are  \\( \tau_{\text{pos}}=1.0, \tau_{\text{neg}}=1.05 \\) ). This ensures that the model is penalized more strictly for "bad" actions to prevent instability, while being more permissive with "good" actions.
 
 To use this formulation, set `loss_type="sapo"` in the [`GRPOConfig`].
 
@@ -206,7 +206,20 @@ We support two ways of using vLLM during training: **server mode** and **colocat
 > [!TIP]
 > By default, Truncated Importance Sampling is activated for vLLM generation to address the generation-training mismatch that occurs when using different frameworks. This can be turned off by setting `vllm_importance_sampling_correction=False`. For more information, see [Truncated Importance Sampling](paper_index#truncated-importance-sampling)
 
-#### 🔌 Option 1: Server mode
+#### Option 1: Colocate mode
+
+In this mode, vLLM runs inside the trainer process and shares GPU memory with the training model. This avoids launching a separate server and can improve GPU utilization, but may lead to memory contention on the training GPUs. This is the default mode.
+
+```python
+from trl import GRPOConfig
+
+training_args = GRPOConfig(
+    ...,
+    use_vllm=True,  # vllm_mode="colocate" by default
+)
+```
+
+#### Option 2: Server mode
 
 In this mode, vLLM runs in a separate process (and using separate GPUs) and communicates with the trainer via HTTP. This is ideal if you have dedicated GPUs for inference.
 
@@ -224,26 +237,12 @@ In this mode, vLLM runs in a separate process (and using separate GPUs) and comm
    training_args = GRPOConfig(
        ...,
        use_vllm=True,
-       vllm_mode="server",  # default value, can be omitted
+       vllm_mode="server",
    )
    ```
 
 > [!WARNING]
 > Make sure that the server is using different GPUs than the trainer, otherwise you may run into NCCL errors. You can specify the GPUs to use with the `CUDA_VISIBLE_DEVICES` environment variable.
-
-#### 🧩 Option 2: Colocate mode
-
-In this mode, vLLM runs inside the trainer process and shares GPU memory with the training model. This avoids launching a separate server and can improve GPU utilization, but may lead to memory contention on the training GPUs.
-
-```python
-from trl import GRPOConfig
-
-training_args = GRPOConfig(
-    ...,
-    use_vllm=True,
-    vllm_mode="colocate",
-)
-```
 
 > [!TIP]
 > Depending on the model size and the overall GPU memory requirements for training, you may need to adjust the `vllm_gpu_memory_utilization` parameter in [`GRPOConfig`] to avoid underutilization or out-of-memory errors.
@@ -349,6 +348,7 @@ def main():
     training_args = GRPOConfig(
         per_device_train_batch_size=4,
         use_vllm=True,
+        vllm_mode="server",
         vllm_server_host=args.vllm_server_host.replace("ip-", "").replace("-", "."),  # from ip-X-X-X-X to X.X.X.X
     )
 
@@ -644,11 +644,59 @@ trainer = GRPOTrainer(
 )
 ```
 
+You can also provide tools through `environment_factory`. In this mode, [`GRPOTrainer`] creates one environment instance per rollout and exposes the environment's public methods as tools.
+
+> [!IMPORTANT]
+> `environment_factory` requires `transformers>=5.2.0`.
+
+The following is a minimal example of using `environment_factory` to define a simple environment with an `increment` method, which is exposed as a tool to the agent:
+
+```python
+from datasets import Dataset
+from trl import GRPOConfig, GRPOTrainer
+
+instructions = [f"Increment the counter by {i}." for i in range(1, 7)]
+dataset = Dataset.from_dict({"prompt": [[{"role": "user", "content": instruction}] for instruction in instructions]})
+
+def reward_func(environments, **kwargs):  # dummy reward: the reward is the current value of the counter
+    return [environment.counter for environment in environments]
+
+class IncrementEnv:
+    def reset(self, **kwargs) -> str | None:  # required; receives sampled row fields as kwargs (e.g., `prompt`)
+        self.counter = 0
+        return "Counter reset to 0.\n"
+
+    def increment(self, step: int) -> int:  # the other public methods of the environment are exposed as tools
+        """
+        Increment the internal counter.
+
+        Args:
+            step: Value to add to the counter.
+
+        Returns:
+            The updated counter value.
+        """
+        self.counter += step
+        return self.counter
+
+trainer = GRPOTrainer(
+    model="Qwen/Qwen3-0.6B",
+    args=GRPOConfig(chat_template_kwargs={"enable_thinking": False}),
+    train_dataset=dataset,
+    reward_funcs=reward_func,
+    environment_factory=IncrementEnv,
+)
+trainer.train()
+```
+
+`reset` can return either `None` or a string. In GRPO, when it returns a string, that string is appended to the last user message before generation.
+
 ### Supported Models
 
 Tested with:
 
-- **Qwen3** — e.g., `Qwen/Qwen3-0.6B`
+- [**Qwen3**](https://huggingface.co/collections/Qwen/qwen3) — e.g., `Qwen/Qwen3-0.6B`
+- [**Qwen3.5**](https://huggingface.co/collections/Qwen/qwen35) — e.g., `Qwen/Qwen3.5-2B`
 
 > [!TIP]
 > Compatibility with all LLMs is not guaranteed. If you believe a model should be supported, feel free to open an issue on GitHub — or better yet, submit a pull request with the required changes.
@@ -693,7 +741,6 @@ accelerate launch \
   --model_name_or_path Qwen/Qwen2.5-VL-3B-Instruct \
   --output_dir grpo-Qwen2.5-VL-3B-Instruct \
   --learning_rate 1e-5 \
-  --gradient_checkpointing \
   --dtype bfloat16 \
   --max_completion_length 1024 \
   --use_vllm \
