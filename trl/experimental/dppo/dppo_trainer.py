@@ -72,11 +72,10 @@ class DPPOTrainer(GRPOTrainer):
     """
     Trainer for Divergence Proximal Policy Optimization (DPPO).
 
-    DPPO replaces PPO/GRPO's heuristic ratio-clipping with a principled trust region based on direct policy
-    divergence estimates. PPO-style clipping masks tokens based on probability ratio π/μ, which over-penalizes
-    low-probability tokens and under-penalizes high-probability tokens. In contrast, DPPO masks based on
-    direct approximation of policy divergence (e.g TV or KL) ensuring updates stay within a theoretically
-    grounded trust region.
+    DPPO replaces PPO/GRPO's heuristic ratio-clipping with a principled trust region based on direct policy divergence
+    estimates. PPO-style clipping masks tokens based on probability ratio π/μ, which over-penalizes low-probability
+    tokens and under-penalizes high-probability tokens. In contrast, DPPO masks based on direct approximation of policy
+    divergence (e.g TV or KL) ensuring updates stay within a theoretically grounded trust region.
 
 
     Four divergence approximations are supported:
@@ -252,7 +251,7 @@ class DPPOTrainer(GRPOTrainer):
             # See: https://github.com/huggingface/transformers/issues/44514
             tokenized = self.processing_class.apply_chat_template(
                 conversation=prompts,
-                tools=self.tools,
+                tools=self.tools or None,  # `or None`: Llama bug: it renders tool boilerplate for tools=[]
                 chat_template=self.chat_template,
                 add_generation_prompt=True,
                 tokenize=True,
@@ -275,8 +274,8 @@ class DPPOTrainer(GRPOTrainer):
         """Generate completions, always extracting sampled token logprobs.
 
         Returns:
-            5-tuple of (prompt_ids, completion_ids, logprobs, topk_logprobs, topk_token_ids).
-            topk_logprobs and topk_token_ids are None when divergence_type is not topk.
+            5-tuple of (prompt_ids, completion_ids, logprobs, topk_logprobs, topk_token_ids). topk_logprobs and
+            topk_token_ids are None when divergence_type is not topk.
         """
         device = self.accelerator.device
         mode = "train" if self.model.training else "eval"
@@ -356,9 +355,7 @@ class DPPOTrainer(GRPOTrainer):
                 torch.no_grad(),
                 FSDP.summon_full_params(self.model_wrapped, recurse=False) if self.is_fsdp_enabled else nullcontext(),
             ):
-                gen_output = unwrapped_model.generate(
-                    **generate_inputs, generation_config=gen_config, disable_compile=True
-                )
+                gen_output = unwrapped_model.generate(**generate_inputs, generation_config=gen_config)
 
             prompt_ids_tensor, prompt_mask = generate_inputs["input_ids"], generate_inputs["attention_mask"]
             prompt_length = prompt_ids_tensor.size(1)
@@ -420,9 +417,9 @@ class DPPOTrainer(GRPOTrainer):
     ):
         """Tool execution loop that also threads top-K logprob data alongside logprobs.
 
-        Mirrors GRPOTrainer._tool_call_loop but additionally concatenates topk_logprobs and topk_token_ids
-        the same way logprobs is concatenated: real data for model-generated tokens, zero-padding for
-        tool-result tokens. When topk data is None (binary divergence), behaves identically to the parent.
+        Mirrors GRPOTrainer._tool_call_loop but additionally concatenates topk_logprobs and topk_token_ids the same way
+        logprobs is concatenated: real data for model-generated tokens, zero-padding for tool-result tokens. When topk
+        data is None (binary divergence), behaves identically to the parent.
         """
         K = self.divergence_topk
         has_topk = topk_logprobs is not None
@@ -492,7 +489,7 @@ class DPPOTrainer(GRPOTrainer):
             # Tokenize and filter samples whose length exceeds max allowed length
             pct_ids = self.processing_class.apply_chat_template(
                 prompt_completion_tools,
-                tools=self.tools,
+                tools=self.tools or None,  #  `or None`: Llama bug: it renders tool boilerplate for tools=[]
                 chat_template=self.chat_template,
                 add_generation_prompt=True,
                 tokenize=True,
@@ -620,8 +617,8 @@ class DPPOTrainer(GRPOTrainer):
         """Generate completions, handling tool calls, and thread top-K logprob data through the full pipeline.
 
         Returns:
-            9-tuple of (prompt_ids, completion_ids, tool_mask, completions, total_completion_tokens,
-            logprobs, topk_logprobs, topk_token_ids, extra_fields).
+            9-tuple of (prompt_ids, completion_ids, tool_mask, completions, total_completion_tokens, logprobs,
+            topk_logprobs, topk_token_ids, extra_fields).
         """
         device = self.accelerator.device
         mode = "train" if self.model.training else "eval"
@@ -768,8 +765,8 @@ class DPPOTrainer(GRPOTrainer):
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor]:
         """Compute per-token log-probs, (optionally) entropies, and top-K log-probs in one forward pass.
 
-        Evaluates the current policy's log-probs at the rollout's top-K token IDs from the same
-        forward pass used for per_token_logps, avoiding an extra model call.
+        Evaluates the current policy's log-probs at the rollout's top-K token IDs from the same forward pass used for
+        per_token_logps, avoiding an extra model call.
 
         Args:
             topk_token_ids: Rollout policy's top-K token IDs, shape (B, T, K). The current policy's
@@ -875,7 +872,7 @@ class DPPOTrainer(GRPOTrainer):
                     "template internally."
                 )
             prompts = [
-                prepare_multimodal_messages(prompt, image_list)
+                prepare_multimodal_messages(prompt, images=image_list)
                 for prompt, image_list in zip(prompts, images, strict=True)
             ]
 
@@ -1118,7 +1115,7 @@ class DPPOTrainer(GRPOTrainer):
             self._metrics[mode][f"rewards/{reward_func_name}/mean"].append(mean_rewards)
             std_func_rewards = nanstd(rewards_per_func[:, i]).item()
             self._metrics[mode][f"rewards/{reward_func_name}/std"].append(std_func_rewards)
-        rewards = rewards_per_func.nansum(dim=1)
+        rewards = (rewards_per_func * self.reward_weights.to(rewards_per_func.device).unsqueeze(0)).nansum(dim=1)
         self._metrics[mode]["reward"].append(rewards.mean().item())
         self._metrics[mode]["reward_std"].append(rewards.std().item())
         self._metrics[mode]["frac_reward_zero_std"].append(is_std_zero.float().mean().item())
@@ -1207,11 +1204,11 @@ class DPPOTrainer(GRPOTrainer):
             completion_mask (`torch.Tensor`):
                 Binary mask of shape `(B, T)` where `1` indicates valid completion tokens and `0` padding.
             current_topk_logps (`torch.Tensor` or `None`):
-                Log-probabilities of the current policy at the rollout's top-K token IDs, shape `(B, T, K)`.
-                Required when `divergence_type` is `"topk_tv"` or `"topk_kl"`.
+                Log-probabilities of the current policy at the rollout's top-K token IDs, shape `(B, T, K)`. Required
+                when `divergence_type` is `"topk_tv"` or `"topk_kl"`.
             sampling_topk_logps (`torch.Tensor` or `None`):
-                Log-probabilities of the sampling policy at the rollout's top-K token IDs, shape `(B, T, K)`.
-                Required when `divergence_type` is `"topk_tv"` or `"topk_kl"`.
+                Log-probabilities of the sampling policy at the rollout's top-K token IDs, shape `(B, T, K)`. Required
+                when `divergence_type` is `"topk_tv"` or `"topk_kl"`.
 
         Returns:
             `torch.Tensor`:
