@@ -24,7 +24,7 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from operator import itemgetter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Optional
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -75,9 +75,6 @@ if is_sklearn_available():
 
 if is_joblib_available():
     import joblib
-
-if TYPE_CHECKING:
-    from transformers import PreTrainedTokenizer
 
 logger = logging.get_logger(__name__)
 
@@ -167,8 +164,8 @@ class RunningMoments:
 
 def _tokenize(
     batch: dict[str, list[Any]],
-    tokenizer: "PreTrainedTokenizer",
-    embedding_tokenizer: Optional["PreTrainedTokenizer"] = None,
+    tokenizer: PreTrainedTokenizerBase,
+    embedding_tokenizer: PreTrainedTokenizerBase | None = None,
 ) -> dict[str, list[Any]]:
     """Tokenize a batch from a BCO specific dataset."""
     prompt_tokenized = tokenizer(batch["prompt"], add_special_tokens=False)
@@ -645,7 +642,9 @@ class BCOTrainer(_BaseTrainer):
             )
             # Apply the chat template if needed
             train_dataset = train_dataset.map(
-                maybe_apply_chat_template, fn_kwargs={"tokenizer": processing_class}, num_proc=args.dataset_num_proc
+                maybe_apply_chat_template,
+                fn_kwargs={"processing_class": processing_class},
+                num_proc=args.dataset_num_proc,
             )
             if eval_dataset is not None:
                 # Extract the prompt if needed
@@ -658,7 +657,7 @@ class BCOTrainer(_BaseTrainer):
                 )
                 eval_dataset = eval_dataset.map(
                     maybe_apply_chat_template,
-                    fn_kwargs={"tokenizer": processing_class},
+                    fn_kwargs={"processing_class": processing_class},
                     num_proc=args.dataset_num_proc,
                 )
 
